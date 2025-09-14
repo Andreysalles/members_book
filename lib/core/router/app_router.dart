@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../features/admin/presentation/pages/admin_dashboard_page.dart';
 import '../../features/chat/presentation/pages/chat_page.dart';
 import '../../features/chat/presentation/pages/inbox_page.dart';
 import '../../features/chat/presentation/pages/user_chat_page.dart';
@@ -18,9 +19,11 @@ class AppRouter {
   static const String chatAssistant = '/chat/assistant';
   static const String gamification = '/gamification';
   static const String manifesto = '/manifesto';
+  static const String admin = '/admin';
 
   static final GoRouter router = GoRouter(
     initialLocation: home,
+    debugLogDiagnostics: true,
     routes: [
       // Rota principal - Home
       GoRoute(
@@ -102,6 +105,18 @@ class AppRouter {
         path: manifesto,
         name: 'manifesto',
         builder: (context, state) => const ManifestoPage(),
+      ),
+
+      // Rota de administração
+      GoRoute(
+        path: admin,
+        name: 'admin',
+        pageBuilder: (context, state) {
+          return NoTransitionPage(
+            key: state.pageKey,
+            child: const AdminDashboardPage(),
+          );
+        },
       ),
     ],
 

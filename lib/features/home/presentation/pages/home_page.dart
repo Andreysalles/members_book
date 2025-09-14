@@ -4,6 +4,8 @@ import 'package:go_router/go_router.dart';
 import '../../../../core/router/app_router.dart';
 import '../../../../core/theme/app_theme.dart';
 import '../../../../core/widgets/custom_bottom_navigation.dart';
+import '../widgets/advanced_filter_system.dart';
+import '../widgets/smart_search_bar.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -16,6 +18,9 @@ class _HomePageState extends State<HomePage> {
   final TextEditingController _searchController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
   List<Map<String, dynamic>> _filteredMembers = [];
+  List<String> _selectedAreas = [];
+  final Map<String, int> _areaCounts = {};
+  final List<String> _searchSuggestions = [];
   bool _isCollapsed = false;
 
   // Nome do usuário logado (mock - em produção viria do estado/API)
@@ -119,6 +124,38 @@ class _HomePageState extends State<HomePage> {
     _filteredMembers = List.from(_allMembers);
     _searchController.addListener(_onSearchChanged);
     _scrollController.addListener(_onScroll);
+    _calculateAreaCounts();
+  }
+
+  void _calculateAreaCounts() {
+    _areaCounts.clear();
+    _searchSuggestions.clear();
+
+    for (final member in _allMembers) {
+      final area = _extractAreaFromPosition(member['position']?.toString() ?? '');
+      if (area.isNotEmpty) {
+        _areaCounts[area] = (_areaCounts[area] ?? 0) + 1;
+        if (!_searchSuggestions.contains(area)) {
+          _searchSuggestions.add(area);
+        }
+      }
+
+      // Adicionar nome e especialidades às sugestões
+      final name = member['name']?.toString() ?? '';
+      if (name.isNotEmpty && !_searchSuggestions.contains(name)) {
+        _searchSuggestions.add(name);
+      }
+
+      final specialties = member['specialties'] as List<dynamic>? ?? [];
+      for (final specialty in specialties) {
+        final specialtyStr = specialty.toString();
+        if (specialtyStr.isNotEmpty && !_searchSuggestions.contains(specialtyStr)) {
+          _searchSuggestions.add(specialtyStr);
+        }
+      }
+    }
+
+    _searchSuggestions.sort();
   }
 
   void _onScroll() {
@@ -136,20 +173,96 @@ class _HomePageState extends State<HomePage> {
   }
 
   void _onSearchChanged() {
-    final query = _searchController.text.toLowerCase().trim();
+    _applyFilters();
+  }
+
+  void _onAreasChanged(List<String> selectedAreas) {
     setState(() {
-      if (query.isEmpty) {
-        _filteredMembers = List.from(_allMembers);
-      } else {
-        _filteredMembers = _allMembers.where((member) {
+      _selectedAreas = selectedAreas;
+    });
+    _applyFilters();
+  }
+
+  void _applyFilters() {
+    final query = _searchController.text.toLowerCase().trim();
+
+    setState(() {
+      _filteredMembers = _allMembers.where((member) {
+        // Filtro por texto de busca
+        bool matchesSearch = true;
+        if (query.isNotEmpty) {
           final name = member['name'].toString().toLowerCase();
           final position = member['position']?.toString().toLowerCase() ?? '';
           final description = member['description']?.toString().toLowerCase() ?? '';
+          final area = _extractAreaFromPosition(member['position']?.toString() ?? '').toLowerCase();
 
-          return name.contains(query) || position.contains(query) || description.contains(query);
-        }).toList();
-      }
+          matchesSearch =
+              name.contains(query) || position.contains(query) || description.contains(query) || area.contains(query);
+        }
+
+        // Filtro por área
+        bool matchesArea = true;
+        if (_selectedAreas.isNotEmpty) {
+          final memberArea = _extractAreaFromPosition(member['position']?.toString() ?? '');
+          matchesArea = _selectedAreas.any((selectedArea) =>
+              _normalizeArea(memberArea).contains(_normalizeArea(selectedArea)) ||
+              _normalizeArea(selectedArea).contains(_normalizeArea(memberArea)));
+        }
+
+        return matchesSearch && matchesArea;
+      }).toList();
+
+      // Ordenar por relevância
+      _sortMembersByRelevance();
     });
+  }
+
+  void _sortMembersByRelevance() {
+    _filteredMembers.sort((a, b) {
+      // Prioridade 1: Score (maior primeiro)
+      final scoreA = a['score'] as int? ?? 0;
+      final scoreB = b['score'] as int? ?? 0;
+      if (scoreA != scoreB) {
+        return scoreB.compareTo(scoreA);
+      }
+
+      // Prioridade 2: Número de indicações (maior primeiro)
+      final indicationsA = a['indicationsCount'] as int? ?? 0;
+      final indicationsB = b['indicationsCount'] as int? ?? 0;
+      if (indicationsA != indicationsB) {
+        return indicationsB.compareTo(indicationsA);
+      }
+
+      // Prioridade 3: Ordem alfabética do nome
+      final nameA = a['name'] as String? ?? '';
+      final nameB = b['name'] as String? ?? '';
+      return nameA.compareTo(nameB);
+    });
+  }
+
+  String _extractAreaFromPosition(String position) {
+    // Extrai a área da posição (ex: "Desenvolvedor Senior • Tecnologia" -> "Tecnologia")
+    if (position.contains('•')) {
+      return position.split('•').last.trim();
+    }
+    return position;
+  }
+
+  String _normalizeArea(String area) {
+    // Normaliza a área para comparação (remove acentos, converte para minúsculas, etc.)
+    return area
+        .toLowerCase()
+        .replaceAll('ã', 'a')
+        .replaceAll('á', 'a')
+        .replaceAll('à', 'a')
+        .replaceAll('â', 'a')
+        .replaceAll('é', 'e')
+        .replaceAll('ê', 'e')
+        .replaceAll('í', 'i')
+        .replaceAll('ó', 'o')
+        .replaceAll('ô', 'o')
+        .replaceAll('ú', 'u')
+        .replaceAll('ç', 'c');
   }
 
   @override
@@ -163,7 +276,7 @@ class _HomePageState extends State<HomePage> {
           controller: _scrollController,
           slivers: [
             SliverAppBar(
-              expandedHeight: 120,
+              expandedHeight: 100,
               floating: false,
               pinned: true,
               backgroundColor: const Color(0xFF1A1A1A),
@@ -239,7 +352,7 @@ class _HomePageState extends State<HomePage> {
                   ),
                   child: SafeArea(
                     child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+                      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
                       child: Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         crossAxisAlignment: CrossAxisAlignment.center,
@@ -333,6 +446,19 @@ class _HomePageState extends State<HomePage> {
                               ),
                             ),
                           ),
+
+                          // Área invisível clicável para admin (canto superior direito)
+                          GestureDetector(
+                            onTap: () {
+                              context.push(AppRouter.admin);
+                            },
+                            child: Container(
+                              width: 48,
+                              height: 48,
+                              color: Colors.transparent,
+                            ),
+                          ),
+                          const SizedBox(width: 12),
 
                           // Chat com badge
                           GestureDetector(
@@ -447,89 +573,94 @@ class _HomePageState extends State<HomePage> {
                         ),
                         const SizedBox(height: 12),
 
-                        // Search bar premium
-                        Container(
-                          decoration: BoxDecoration(
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.black.withOpacity(0.05),
-                                blurRadius: 10,
-                                offset: const Offset(0, 2),
-                              ),
-                            ],
-                          ),
-                          child: TextField(
-                            controller: _searchController,
-                            style: const TextStyle(
-                              color: AppTheme.textPrimary,
-                              fontSize: 16,
-                            ),
-                            decoration: InputDecoration(
-                              hintText: 'Buscar por nome, cargo ou área...',
-                              hintStyle: TextStyle(
-                                color: AppTheme.textSecondary.withOpacity(0.7),
-                                fontSize: 16,
-                              ),
-                              prefixIcon: Container(
-                                padding: const EdgeInsets.all(12),
-                                child: const Icon(
-                                  Icons.search,
-                                  color: AppTheme.textSecondary,
-                                  size: 20,
-                                ),
-                              ),
-                              suffixIcon: _searchController.text.isNotEmpty
-                                  ? IconButton(
-                                      onPressed: () {
-                                        _searchController.clear();
-                                        FocusScope.of(context).unfocus();
-                                      },
-                                      icon: const Icon(
-                                        Icons.clear,
-                                        color: AppTheme.textSecondary,
-                                        size: 20,
-                                      ),
-                                    )
-                                  : null,
-                              filled: true,
-                              fillColor: const Color(0xFF1A1A1A),
-                              border: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(16),
-                                borderSide: BorderSide.none,
-                              ),
-                              enabledBorder: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(16),
-                                borderSide: BorderSide.none,
-                              ),
-                              focusedBorder: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(16),
-                                borderSide: const BorderSide(
-                                  color: Color(0xFF4A90E2),
-                                  width: 2,
-                                ),
-                              ),
-                              contentPadding: const EdgeInsets.symmetric(
-                                horizontal: 20,
-                                vertical: 16,
-                              ),
-                            ),
-                            textInputAction: TextInputAction.search,
-                            onSubmitted: (_) => FocusScope.of(context).unfocus(),
-                          ),
+                        // Barra de pesquisa inteligente
+                        SmartSearchBar(
+                          controller: _searchController,
+                          onSearchChanged: (query) => _onSearchChanged(),
+                          areaCounts: _areaCounts,
+                          suggestions: _searchSuggestions,
                         ),
                       ],
                     ),
                   ),
 
-                  const SizedBox(height: 20),
+                  const SizedBox(height: 12),
                 ],
               ),
             ),
 
+            // Sistema de filtros avançado
+            SliverToBoxAdapter(
+              child: AdvancedFilterSystem(
+                selectedAreas: _selectedAreas,
+                areaCounts: _areaCounts,
+                onAreasChanged: _onAreasChanged,
+                onSearchChanged: (query) => _onSearchChanged(),
+                searchQuery: _searchController.text,
+              ),
+            ),
+
+            // Indicador de resultados
+            if (_filteredMembers.isNotEmpty || _searchController.text.isNotEmpty || _selectedAreas.isNotEmpty)
+              SliverToBoxAdapter(
+                child: Container(
+                  margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: AppTheme.textSecondary.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color: AppTheme.textSecondary.withOpacity(0.2),
+                      width: 1,
+                    ),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(
+                        Icons.filter_list,
+                        size: 16,
+                        color: AppTheme.textSecondary,
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        _filteredMembers.isEmpty
+                            ? 'Nenhum membro encontrado'
+                            : '${_filteredMembers.length} membro${_filteredMembers.length > 1 ? 's' : ''} encontrado${_filteredMembers.length > 1 ? 's' : ''}',
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                              color: AppTheme.textSecondary,
+                              fontWeight: FontWeight.w500,
+                            ),
+                      ),
+                      if (_selectedAreas.isNotEmpty) ...[
+                        const SizedBox(width: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF4A90E2).withOpacity(0.2),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: Text(
+                            '${_selectedAreas.length} área${_selectedAreas.length > 1 ? 's' : ''}',
+                            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                  color: const Color(0xFF4A90E2),
+                                  fontWeight: FontWeight.w600,
+                                  fontSize: 10,
+                                ),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+              ),
+
             // Lista de membros otimizada
-            _filteredMembers.isEmpty && _searchController.text.isNotEmpty
-                ? SliverFillRemaining(
-                    child: _buildEmptyState(),
+            _filteredMembers.isEmpty && (_searchController.text.isNotEmpty || _selectedAreas.isNotEmpty)
+                ? SliverToBoxAdapter(
+                    child: SizedBox(
+                      height: 250,
+                      child: _buildEmptyState(),
+                    ),
                   )
                 : SliverPadding(
                     padding: const EdgeInsets.symmetric(horizontal: 20),
@@ -546,7 +677,7 @@ class _HomePageState extends State<HomePage> {
 
             // Espaço extra no final
             const SliverToBoxAdapter(
-              child: SizedBox(height: 100),
+              child: SizedBox(height: 80),
             ),
           ],
         ),
@@ -609,37 +740,37 @@ class _HomePageState extends State<HomePage> {
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
           Container(
-            padding: const EdgeInsets.all(24),
+            padding: const EdgeInsets.all(20),
             decoration: BoxDecoration(
               color: AppTheme.textSecondary.withOpacity(0.1),
               shape: BoxShape.circle,
             ),
             child: Icon(
               Icons.search_off,
-              size: 48,
+              size: 40,
               color: AppTheme.textSecondary.withOpacity(0.5),
             ),
           ),
-          const SizedBox(height: 24),
+          const SizedBox(height: 16),
           const Text(
             'Nenhum membro encontrado',
             style: TextStyle(
               color: AppTheme.textPrimary,
-              fontSize: 18,
+              fontSize: 16,
               fontWeight: FontWeight.w600,
             ),
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 6),
           Text(
             'Tente buscar por outro termo ou\nverifique a ortografia',
             textAlign: TextAlign.center,
             style: TextStyle(
               color: AppTheme.textSecondary.withOpacity(0.8),
-              fontSize: 14,
+              fontSize: 13,
               height: 1.4,
             ),
           ),
-          const SizedBox(height: 24),
+          const SizedBox(height: 16),
           TextButton.icon(
             onPressed: () {
               _searchController.clear();

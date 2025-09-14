@@ -1,1 +1,0 @@
-int teste = 0;
